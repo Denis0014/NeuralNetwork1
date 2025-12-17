@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Threading.Tasks;
 
@@ -9,16 +10,16 @@ namespace NeuralNetwork1
         public int inputsCount;
         public double[] weights;
         public double output;
+        private static Random rand = new Random();
 
         public Neuron(int inputs)
         {
             inputsCount = inputs;
             weights = new double[inputsCount];
             // Random initialization of weights
-            Random rand = new Random();
             for (int i = 0; i < inputsCount; i++)
             {
-                weights[i] = rand.NextDouble();
+                weights[i] = rand.NextDouble() * 2 - 1;
             }
         }
         private double Sigmoid(double x)
@@ -115,8 +116,8 @@ namespace NeuralNetwork1
                     {
                         Neuron neuron = layer.neurons[j];
                         layerOutput[j] = neuron.Compute(currentInput);
-                        layer.output[j] = layerOutput[j];
                     });
+                    layer.output = layerOutput;
                 }
                 else
                 {
@@ -137,66 +138,46 @@ namespace NeuralNetwork1
             }
         }
 
-        private void Backward(double[] input, double[] expectedOutput, double learningRate, bool parallel)
+        private void Backward(double[] expectedOutput, double learningRate, bool parallel)
         {
-            double[] currentInput = input;
-            
-            for (int i = layers.Length - 1; i >= 0; i--)
+            // Вычисление дельт для выходного слоя
+            double[] deltaOut = new double[expectedOutput.Length];
+            for (int k = 0; k < expectedOutput.Length; k++)
             {
-                Layer layer = layers[i];
-                double[] layerInput = currentInput;   // вход в слой
-                double[] layerOutput = layer.output;   // выход из слоя
-                if (i == layers.Length - 1)
+                double outputValue = layers[layers.Length - 1].output[k];
+                deltaOut[k] = outputValue * (1 - outputValue) * (expectedOutput[k] - outputValue);
+            }
+
+            // Вычисление дельт для скрытых слоев
+            double[][] deltaHidden = new double[layersCount - 1][];
+            double[] currentDelta = deltaOut;
+            for (int k = layers.Length - 1; k >= 1; k--)
+            {
+                if (k == 0) break;
+                Layer currentLayer = layers[k];
+                Layer previousLayer = layers[k - 1];
+                deltaHidden[k - 1] = new double[previousLayer.neuronsCount];
+                for (int j = 0; j < previousLayer.neuronsCount; j++)
                 {
-                    // Вычисление ошибки для выходного слоя
-                    if (parallel)
+                    double sum = 0.0;
+                    for (int m = 0; m < currentLayer.neuronsCount; m++)
                     {
-                        Parallel.For(0, layer.neuronsCount, j =>
-                        {
-                            double error = expectedOutput[j] - layerOutput[j];
-                            UpdateWeight(layer, layerInput, j, learningRate, error);
-                        });
+                        sum += currentDelta[m] * currentLayer.neurons[m].weights[j];
                     }
-                    else
-                    {
-                        for (int j = 0; j < layer.neuronsCount; j++)
-                        {
-                            double error = expectedOutput[j] - layerOutput[j];
-                            UpdateWeight(layer, layerInput, j, learningRate, error);
-                        }
-                    }
+                    double outputValue = previousLayer.output[j];
+                    deltaHidden[k - 1][j] = outputValue * (1 - outputValue) * sum;
                 }
-                else
+                currentDelta = deltaHidden[k - 1];
+            }
+
+            // Обновление весов всех слоев
+            for (int l = layers.Length - 1; l >= 1; l--) {
+                Layer layer = layers[l];
+                double[] inputToUse = layers[l - 1].output;
+                for (int j = 0; j < layer.neuronsCount; j++)
                 {
-                    // Вычисление ошибки для скрытых слоев (упрощённо)
-                    if (parallel)
-                    {
-                        Parallel.For(0, layer.neuronsCount, j =>
-                        {
-                            double error = 0.0;
-                            Layer nextLayer = layers[i + 1];
-                            for (int k = 0; k < nextLayer.neuronsCount; k++)
-                            {
-                                error += nextLayer.neurons[k].weights[j] * (expectedOutput[k] - nextLayer.output[k]);
-                            }
-                            UpdateWeight(layer, layerInput, j, learningRate, error);
-                        });
-                    }
-                    else
-                    {
-                        for (int j = 0; j < layer.neuronsCount; j++)
-                        {
-                            double error = 0.0;
-                            Layer nextLayer = layers[i + 1];
-                            for (int k = 0; k < nextLayer.neuronsCount; k++)
-                            {
-                                error += nextLayer.neurons[k].weights[j] * (expectedOutput[k] - nextLayer.output[k]);
-                            }
-                            UpdateWeight(layer, layerInput, j, learningRate, error);
-                        }
-                    }
+                    UpdateWeight(layer, inputToUse, j, learningRate, l == layers.Length - 1 ? deltaOut[j] : deltaHidden[l - 1][j]);
                 }
-                currentInput = layer.output;
             }
         }
 
@@ -208,7 +189,7 @@ namespace NeuralNetwork1
             while (error > acceptableError)
             {
                 double[] output = Forward(sample.input, parallel);
-                Backward(sample.input, sample.Output, 0.1, parallel);
+                Backward(sample.Output, 0.1, parallel);
                 double localError = 0.0;
                 for (int i = 0; i < output.Length; i++)
                 {
@@ -244,7 +225,7 @@ namespace NeuralNetwork1
                 for (int i = 0; i < samplesSet.Count; ++i)
                 {
                     double[] output = Forward(inputs[i], parallel);
-                    Backward(inputs[i], outputs[i], 0.1, parallel);
+                    Backward(outputs[i], 0.1, parallel);
                     for (int j = 0; j < output.Length; j++)
                     {
                         localError += Math.Pow(outputs[i][j] - output[j], 2);
